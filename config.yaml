@@ -1,0 +1,45 @@
+# Sources à surveiller pour la veille Boomi
+# Ajoutez / retirez des entrées librement, pas besoin de toucher au code.
+
+rss_feeds:
+  - name: "Boomi Community - Release Notes"
+    url: "https://community.boomi.com/s/topic/0TO1W000000cn2eWAA/release-notes"
+    type: "rss"          # certaines pages Community exposent un flux RSS via ?type=rss ou un bouton dédié
+                          # si l'URL ci-dessus ne renvoie pas de XML, utilisez la page HTML en mode "scrape" (voir plus bas)
+
+scrape_pages:
+  # Pages sans RSS officiel : on scrape les liens d'articles / titres de release
+  - name: "Boomi Platform Release Notes"
+    url: "https://help.boomi.com/docs/Atomsphere/Release_Notes/Platform/"
+    # sélecteur CSS pour cibler les liens d'articles (à ajuster si la structure du site change)
+    link_selector: "main a"
+
+  - name: "Boomi Product Updates (blog)"
+    url: "https://boomi.com/product-updates/"
+    link_selector: "a"
+
+  - name: "Boomi Release Notes Summary"
+    url: "https://help.boomi.com/docs/Atomsphere/Release_Notes/summary"
+    link_selector: "main a"
+
+# Mots-clés utilisés pour filtrer le bruit (liens de navigation, footer, etc.)
+# Un lien scrapé n'est retenu que si son texte contient un de ces mots-clés
+# OU si vous laissez la liste vide pour ne rien filtrer (déconseillé, trop de bruit).
+keep_keywords:
+  - "release"
+  - "update"
+  - "20"          # capte les années (2026, 2025...) et les mois numérotés
+  - "connector"
+  - "GA"
+  - "API"
+  - "security"
+
+# Catégories utilisées par le LLM pour classer chaque item
+categories:
+  - "Nouveau connecteur"
+  - "Fonctionnalité IA / Agent"
+  - "Sécurité"
+  - "Dépréciation / Breaking change"
+  - "API Management"
+  - "Amélioration générale"
+  - "Autre"
