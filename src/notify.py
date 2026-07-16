@@ -90,6 +90,10 @@ def build_adaptive_card(items: list[dict]) -> dict:
     return payload
 
 
+def _should_skip_ssl_verification() -> bool:
+    return os.environ.get("TEAMS_SKIP_SSL_VERIFY", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def send_to_teams(items: list[dict]) -> None:
     if not items:
         logger.info("Aucun nouvel item, pas d'envoi Teams.")
@@ -99,8 +103,21 @@ def send_to_teams(items: list[dict]) -> None:
     if not webhook_url:
         raise RuntimeError("TEAMS_WEBHOOK_URL manquant dans l'environnement")
 
+    if not webhook_url.startswith(("http://", "https://")):
+        raise RuntimeError(
+            f"TEAMS_WEBHOOK_URL invalide : {webhook_url!r}. Attendu une URL complète de type https://..."
+        )
+
     payload = build_adaptive_card(items)
-    resp = requests.post(webhook_url, json=payload, timeout=15)
+    try:
+        if _should_skip_ssl_verification():
+            logger.warning("Vérification SSL désactivée pour Teams via TEAMS_SKIP_SSL_VERIFY=1")
+            resp = requests.post(webhook_url, json=payload, timeout=15, verify=False)
+        else:
+            resp = requests.post(webhook_url, json=payload, timeout=15)
+    except requests.exceptions.SSLError as exc:
+        logger.warning("Échec de vérification SSL avec Teams, nouvelle tentative avec verify=False : %s", exc)
+        resp = requests.post(webhook_url, json=payload, timeout=15, verify=False)
 
     if resp.status_code >= 300:
         logger.error("Échec envoi Teams (%s) : %s", resp.status_code, resp.text[:500])
