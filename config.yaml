@@ -18,9 +18,9 @@ scrape_pages:
     url: "https://boomi.com/product-updates/"
     link_selector: "a"
 
-  - name: "Boomi Release Notes Summary"
-    url: "https://help.boomi.com/docs/Atomsphere/Release_Notes/summary"
-    link_selector: "main a"
+  # - name: "Boomi Release Notes Summary"
+  #   url: "https://help.boomi.com/docs/Atomsphere/Release_Notes/summary"
+  #   link_selector: "main a"
 
 # Mots-clés utilisés pour filtrer le bruit (liens de navigation, footer, etc.)
 # Un lien scrapé n'est retenu que si son texte contient un de ces mots-clés
@@ -43,3 +43,4 @@ categories:
   - "API Management"
   - "Amélioration générale"
   - "Autre"
+
