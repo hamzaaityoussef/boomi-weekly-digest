@@ -1,46 +1,348 @@
-# Sources à surveiller pour la veille Boomi
-# Ajoutez / retirez des entrées librement, pas besoin de toucher au code.
+# ============================================================
+# Boomi Watch - Configuration des sources
+# ============================================================
 
-rss_feeds:
-  - name: "Boomi Community - Release Notes"
-    url: "https://community.boomi.com/s/topic/0TO1W000000cn2eWAA/release-notes"
-    type: "rss"          # certaines pages Community exposent un flux RSS via ?type=rss ou un bouton dédié
-                          # si l'URL ci-dessus ne renvoie pas de XML, utilisez la page HTML en mode "scrape" (voir plus bas)
+# Aucun flux RSS officiel utilisé actuellement.
+rss_feeds: []
+
+# ============================================================
+# 1. Boomi Community
+# ============================================================
+# Chaque carte est traitée comme un item.
+# Le lien et le titre sont récupérés depuis <a class="card-link">.
 
 scrape_pages:
-  # Pages sans RSS officiel : on scrape les liens d'articles / titres de release
-  - name: "Boomi Platform Release Notes"
-    url: "https://help.boomi.com/docs/Atomsphere/Release_Notes/Platform/"
-    # sélecteur CSS pour cibler les liens d'articles (à ajuster si la structure du site change)
-    link_selector: "main a"
+  - name: "Boomi Community"
+    type: "cards"
+    url: "https://community.boomi.com/boomi_community"
+    render_js: true
+    wait_selector: "div.card.ng-scope"
 
-  - name: "Boomi Product Updates (blog)"
+    item_selector: "div.card.ng-scope"
+    title_selector: "h3.card-title.ng-binding"
+    description_selector: "p.card-excerpt.ng-binding"
+    link_selector: "a.card-link"
+
+    # Le titre et le lien sont directement portés par a.card-link.
+    title_from_item_text: false
+    link_from_item_href: false
+
+    apply_keyword_filter: false
+
+    base_url: "https://community.boomi.com"
+
+    max_items: 20
+
+
+# ============================================================
+# 2. Boomi Product Updates - Latest Product Releases
+# ============================================================
+# Seuls les éléments de la section Latest Product Releases
+# présents dans les div.rc-item sont collectés.
+
+  - name: "Boomi Product Updates - Latest Product Releases"
+    type: "cards"
     url: "https://boomi.com/product-updates/"
-    link_selector: "a"
 
-  # - name: "Boomi Release Notes Summary"
-  #   url: "https://help.boomi.com/docs/Atomsphere/Release_Notes/summary"
-  #   link_selector: "main a"
+    item_selector: "div.rc-item"
 
-# Mots-clés utilisés pour filtrer le bruit (liens de navigation, footer, etc.)
-# Un lien scrapé n'est retenu que si son texte contient un de ces mots-clés
-# OU si vous laissez la liste vide pour ne rien filtrer (déconseillé, trop de bruit).
+    # Titre de la publication.
+    title_selector: "h2.tc-title"
+
+    # Description à l'intérieur du bloc rc-desc.
+    description_selector: "div.rc-desc p"
+
+    # Lien vers l'article complet.
+    link_selector: "a[href]"
+
+    base_url: "https://boomi.com"
+
+    allowed_url_patterns:
+      - "/blog/"
+
+    apply_keyword_filter: false
+
+    excluded_url_patterns:
+      - "#"
+      # - "/platform/"
+      # - "/connectors/"
+      # - "/compliance/"
+      # - "/content/"
+      # - "/company/"
+      # - "/form/"
+
+    max_items: 10
+
+
+# ============================================================
+# 3. Boomi Documentation - Release Notes mensuelles
+# ============================================================
+# {year} et {month} doivent être remplacés automatiquement
+# par l'année et le mois courants dans collect.py.
+#
+# Exemple en juillet 2026 :
+# https://help.boomi.com/docs/Atomsphere/Release_Notes/Platform
+# ?year=2026&month=July
+
+content_pages:
+  - name: "Boomi Platform Release Notes"
+    type: "monthly_release_notes"
+    topic: "Platform"
+
+    url_template: "https://help.boomi.com/docs/Atomsphere/Release_Notes/Platform?year={year}&month={month}"
+
+    render_js: true
+    wait_selector: "div.release-content-wrapper"
+
+    content_selector: "div.release-content-wrapper"
+    title_selector: "div.release-page h1"
+    bullet_selector: "div.release-content-wrapper ul > li"
+
+    excluded_selectors:
+      - "nav"
+      - "header"
+      - "footer"
+      - "script"
+      - "style"
+      - "form"
+      - "div.new-badge-wrapper"
+
+    summarize_with_llm: true
+    summary_max_lines: 3
+    include_source_link: true
+
+
+  # Les routes ci-dessous sont temporairement désactivées jusqu'à confirmation
+  # de l'URL exacte dans la documentation Boomi, afin d'éviter de laisser des chemins
+  # invalides qui produisent des 404.
+  # - name: "Boomi AI Release Notes"
+  #   type: "monthly_release_notes"
+  #   topic: "AI"
+  #   url_template: "https://help.boomi.com/docs/Atomsphere/Release_Notes/AI?year={year}&month={month}"
+  #   render_js: true
+  #   wait_selector: "div.release-content-wrapper"
+  #   content_selector: "div.release-content-wrapper"
+  #   title_selector: "div.release-page h1"
+  #   bullet_selector: "div.release-content-wrapper ul > li"
+  #   excluded_selectors:
+  #     - "nav"
+  #     - "header"
+  #     - "footer"
+  #     - "script"
+  #     - "style"
+  #     - "form"
+  #     - "div.new-badge-wrapper"
+  #   summarize_with_llm: true
+  #   summary_max_lines: 3
+  #   include_source_link: true
+
+  # - name: "Boomi Runtime Release Notes"
+  #   type: "monthly_release_notes"
+  #   topic: "Runtime"
+  #   url_template: "https://help.boomi.com/docs/Atomsphere/Release_Notes/Runtime?year={year}&month={month}"
+  #   render_js: true
+  #   wait_selector: "div.release-content-wrapper"
+  #   content_selector: "div.release-content-wrapper"
+  #   title_selector: "div.release-page h1"
+  #   bullet_selector: "div.release-content-wrapper ul > li"
+  #   excluded_selectors:
+  #     - "nav"
+  #     - "header"
+  #     - "footer"
+  #     - "script"
+  #     - "style"
+  #     - "form"
+  #     - "div.new-badge-wrapper"
+  #   summarize_with_llm: true
+  #   summary_max_lines: 3
+  #   include_source_link: true
+
+  # - name: "Boomi Integration Release Notes"
+  #   type: "monthly_release_notes"
+  #   topic: "Integration"
+  #   url_template: "https://help.boomi.com/docs/Atomsphere/Release_Notes/Integration?year={year}&month={month}"
+  #   render_js: true
+  #   wait_selector: "div.release-content-wrapper"
+  #   content_selector: "div.release-content-wrapper"
+  #   title_selector: "div.release-page h1"
+  #   bullet_selector: "div.release-content-wrapper ul > li"
+  #   excluded_selectors:
+  #     - "nav"
+  #     - "header"
+  #     - "footer"
+  #     - "script"
+  #     - "style"
+  #     - "form"
+  #     - "div.new-badge-wrapper"
+  #   summarize_with_llm: true
+  #   summary_max_lines: 3
+  #   include_source_link: true
+
+  # - name: "Boomi Connectivity Release Notes"
+  #   type: "monthly_release_notes"
+  #   topic: "Connectivity"
+  #   url_template: "https://help.boomi.com/docs/Atomsphere/Release_Notes/Connectivity?year={year}&month={month}"
+  #   render_js: true
+  #   wait_selector: "div.release-content-wrapper"
+  #   content_selector: "div.release-content-wrapper"
+  #   title_selector: "div.release-page h1"
+  #   bullet_selector: "div.release-content-wrapper ul > li"
+  #   excluded_selectors:
+  #     - "nav"
+  #     - "header"
+  #     - "footer"
+  #     - "script"
+  #     - "style"
+  #     - "form"
+  #     - "div.new-badge-wrapper"
+  #   summarize_with_llm: true
+  #   summary_max_lines: 3
+  #   include_source_link: true
+
+  # - name: "Boomi Data Hub Release Notes"
+  #   type: "monthly_release_notes"
+  #   topic: "Data_Hub"
+  #   url_template: "https://help.boomi.com/docs/Atomsphere/Release_Notes/Data_Hub?year={year}&month={month}"
+  #   render_js: true
+  #   wait_selector: "div.release-content-wrapper"
+  #   content_selector: "div.release-content-wrapper"
+  #   title_selector: "div.release-page h1"
+  #   bullet_selector: "div.release-content-wrapper ul > li"
+  #   excluded_selectors:
+  #     - "nav"
+  #     - "header"
+  #     - "footer"
+  #     - "script"
+  #     - "style"
+  #     - "form"
+  #     - "div.new-badge-wrapper"
+  #   summarize_with_llm: true
+  #   summary_max_lines: 3
+  #   include_source_link: true
+
+  # - name: "Boomi API Management Release Notes"
+  #   type: "monthly_release_notes"
+  #   topic: "API_Management"
+  #   url_template: "https://help.boomi.com/docs/Atomsphere/Release_Notes/API_Management?year={year}&month={month}"
+  #   render_js: true
+  #   wait_selector: "div.release-content-wrapper"
+  #   content_selector: "div.release-content-wrapper"
+  #   title_selector: "div.release-page h1"
+  #   bullet_selector: "div.release-content-wrapper ul > li"
+  #   excluded_selectors:
+  #     - "nav"
+  #     - "header"
+  #     - "footer"
+  #     - "script"
+  #     - "style"
+  #     - "form"
+  #     - "div.new-badge-wrapper"
+  #   summarize_with_llm: true
+  #   summary_max_lines: 3
+  #   include_source_link: true
+
+  # - name: "Boomi Event Streams Release Notes"
+  #   type: "monthly_release_notes"
+  #   topic: "Event_Streams"
+  #   url_template: "https://help.boomi.com/docs/Atomsphere/Release_Notes/Event_Streams?year={year}&month={month}"
+  #   render_js: true
+  #   wait_selector: "div.release-content-wrapper"
+  #   content_selector: "div.release-content-wrapper"
+  #   title_selector: "div.release-page h1"
+  #   bullet_selector: "div.release-content-wrapper ul > li"
+  #   excluded_selectors:
+  #     - "nav"
+  #     - "header"
+  #     - "footer"
+  #     - "script"
+  #     - "style"
+  #     - "form"
+  #     - "div.new-badge-wrapper"
+  #   summarize_with_llm: true
+  #   summary_max_lines: 3
+  #   include_source_link: true
+
+
+# ============================================================
+# Paramètres d'extraction
+# ============================================================
+
+collection:
+  request_timeout_seconds: 30
+  max_description_characters: 6000
+  max_content_characters_per_page: 15000
+  remove_duplicate_urls: true
+  remove_empty_items: true
+
+  user_agent: "BoomiWatch/1.0"
+
+  # Les mois doivent être générés en anglais pour les URL Boomi :
+  # January, February, March, April, May, June,
+  # July, August, September, October, November, December.
+  month_language: "english"
+
+  # Empêche l'envoi au LLM d'une page sans aucune release.
+  require_bullet_items_for_release_notes: true
+
+
+# ============================================================
+# Résumé LLM
+# ============================================================
+
+llm_summary:
+  enabled: true
+  language: "fr"
+  max_lines: 3
+
+  instructions: |
+    Résume les nouveautés Boomi en français en trois lignes maximum.
+    Mentionne uniquement les fonctionnalités, améliorations,
+    changements de sécurité, dépréciations et breaking changes importants.
+    Ne crée aucune information absente du contenu source.
+    Ne répète pas le titre.
+    Le lien vers la source sera ajouté séparément par l'application.
+
+
+# ============================================================
+# Filtrage
+# ============================================================
+
+# Le filtrage concerne principalement Boomi Community.
+# Les Release Notes officielles ne doivent pas être supprimées
+# uniquement parce qu'elles ne contiennent pas ces mots-clés.
+
 keep_keywords:
   - "release"
   - "update"
-  - "20"          # capte les années (2026, 2025...) et les mois numérotés
+  - "what's new"
+  - "platform"
+  - "integration"
+  - "runtime"
   - "connector"
-  - "GA"
+  - "connectivity"
   - "API"
   - "security"
+  - "AI"
+  - "agent"
+  - "data hub"
+  - "event streams"
+  - "deprecation"
+  - "deprecated"
 
-# Catégories utilisées par le LLM pour classer chaque item
+
+# ============================================================
+# Catégories du digest
+# ============================================================
+
 categories:
   - "Nouveau connecteur"
   - "Fonctionnalité IA / Agent"
   - "Sécurité"
   - "Dépréciation / Breaking change"
   - "API Management"
+  - "Runtime"
+  - "Intégration"
+  - "Data Hub"
+  - "Event Streams"
   - "Amélioration générale"
   - "Autre"
-

@@ -19,13 +19,15 @@ GOOGLE_MODEL = os.environ.get("GOOGLE_MODEL", "gemini-2.0-flash")
 SYSTEM_PROMPT = """Tu es un assistant qui aide une équipe de data engineers travaillant avec Boomi \
 (iPaaS d'intégration) à suivre les nouveautés de la plateforme.
 
-Pour chaque item fourni (titre + lien), tu dois produire :
-- un résumé en français, 1 à 2 phrases, factuel, basé UNIQUEMENT sur le titre fourni \
-  (ne pas halluciner de détails non présents dans le titre)
+Pour chaque item fourni (titre + contenu + lien), tu dois produire :
+- un résumé en français, 1 à 2 phrases, factuel, basé UNIQUEMENT sur le contenu fourni \
+  (ne pas halluciner de détails non présents dans le contenu)
 - une catégorie parmi : {categories}
 - un niveau d'importance : "haute", "moyenne" ou "basse" \
   (haute = sécurité, breaking change, dépréciation ; moyenne = nouveau connecteur, nouvelle feature ; \
   basse = amélioration mineure)
+
+Pour les release notes mensuelles, limite le résumé à trois lignes concises maximum.
 
 Réponds UNIQUEMENT avec un objet JSON valide, sans texte avant/après, sans balises markdown, \
 au format suivant :
@@ -131,7 +133,15 @@ def summarize_items(items: list[dict], categories: list[str]) -> list[dict]:
 
     try:
         user_payload = json.dumps(
-            [{"id": it["id"], "title": it["title"], "source": it["source"]} for it in items],
+            [
+                {
+                    "id": it["id"],
+                    "title": it["title"],
+                    "source": it["source"],
+                    "content": it.get("content") or it.get("description") or it.get("title") or "",
+                }
+                for it in items
+            ],
             ensure_ascii=False,
         )
 

@@ -1,24 +1,17 @@
+import sys
 from pathlib import Path
-from urllib.parse import urljoin
 
-import feedparser
-import requests
 import yaml
 from bs4 import BeautifulSoup
 
-
 ROOT_DIR = Path(__file__).resolve().parents[1]
+SRC_DIR = ROOT_DIR / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from collect import build_monthly_url, fetch_page_html  # noqa: E402
+
 CONFIG_PATH = ROOT_DIR / "config.yaml"
-
-TIMEOUT = 20
-
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 Chrome/126.0 Safari/537.36 "
-        "BoomiWatch/1.0"
-    )
-}
 
 
 def load_config():
@@ -26,163 +19,55 @@ def load_config():
         return yaml.safe_load(file)
 
 
-def matches_keywords(text, keywords):
-    if not keywords:
-        return True
-
-    normalized_text = text.casefold()
-    return any(keyword.casefold() in normalized_text for keyword in keywords)
-
-
-def test_rss_source(source):
-    name = source["name"]
-    url = source["url"]
-
-    print("\n" + "=" * 80)
-    print(f"RSS SOURCE: {name}")
-    print(f"URL       : {url}")
-
-    try:
-        response = requests.get(
-            url,
-            headers=HEADERS,
-            timeout=TIMEOUT,
-            allow_redirects=True,
-        )
-
-        content_type = response.headers.get("Content-Type", "unknown")
-
-        print(f"HTTP status : {response.status_code}")
-        print(f"Final URL   : {response.url}")
-        print(f"Content-Type: {content_type}")
-        print(f"Size        : {len(response.content)} bytes")
-
-        parsed_feed = feedparser.parse(response.content)
-
-        print(f"Feed title  : {parsed_feed.feed.get('title', 'N/A')}")
-        print(f"Entries     : {len(parsed_feed.entries)}")
-        print(f"Bozo        : {parsed_feed.bozo}")
-
-        if parsed_feed.bozo:
-            print(f"Parse error : {parsed_feed.get('bozo_exception')}")
-
-        if parsed_feed.entries:
-            print("\nFirst entries:")
-
-            for entry in parsed_feed.entries[:5]:
-                print(f"  - {entry.get('title', 'Sans titre')}")
-                print(f"    {entry.get('link', 'Sans lien')}")
-
-            print("\nRESULT: WORKING RSS")
-        else:
-            preview = response.text[:200].replace("\n", " ")
-
-            print(f"\nContent preview: {preview}")
-            print("\nRESULT: NOT AN RSS FEED OR EMPTY FEED")
-
-    except requests.RequestException as error:
-        print(f"\nRESULT: HTTP ERROR: {error}")
+def print_card_preview(source, html):
+    soup = BeautifulSoup(html, "html.parser")
+    cards = soup.select(source.get("item_selector", "div"))
+    print(f"  - cards found: {len(cards)}")
+    for card in cards[:3]:
+        title = card.get_text(" ", strip=True)[:160]
+        print(f"    * {title}")
 
 
-def test_scrape_source(source, keywords):
-    name = source["name"]
-    url = source["url"]
-    selector = source.get("link_selector", "a")
-
-    print("\n" + "=" * 80)
-    print(f"SCRAPE SOURCE: {name}")
-    print(f"URL          : {url}")
-    print(f"CSS selector : {selector}")
-
-    try:
-        response = requests.get(
-            url,
-            headers=HEADERS,
-            timeout=TIMEOUT,
-            allow_redirects=True,
-        )
-
-        content_type = response.headers.get("Content-Type", "unknown")
-
-        print(f"HTTP status : {response.status_code}")
-        print(f"Final URL   : {response.url}")
-        print(f"Content-Type: {content_type}")
-        print(f"Size        : {len(response.content)} bytes")
-
-        response.raise_for_status()
-
-        soup = BeautifulSoup(response.text, "html.parser")
-        selected_elements = soup.select(selector)
-
-        valid_links = []
-        filtered_links = []
-        seen_urls = set()
-
-        for element in selected_elements:
-            title = element.get_text(" ", strip=True)
-            href = element.get("href")
-
-            if not title or not href:
-                continue
-
-            absolute_url = urljoin(response.url, href)
-
-            if absolute_url in seen_urls:
-                continue
-
-            seen_urls.add(absolute_url)
-            valid_links.append((title, absolute_url))
-
-            searchable_value = f"{title} {absolute_url}"
-
-            if matches_keywords(searchable_value, keywords):
-                filtered_links.append((title, absolute_url))
-
-        print(f"Selected elements : {len(selected_elements)}")
-        print(f"Valid unique links: {len(valid_links)}")
-        print(f"Links after filter: {len(filtered_links)}")
-
-        if filtered_links:
-            print("\nFirst retained links:")
-
-            for title, link in filtered_links[:10]:
-                print(f"  - {title}")
-                print(f"    {link}")
-
-            print("\nRESULT: WORKING")
-        elif valid_links:
-            print("\nRESULT: PAGE ACCESSIBLE, BUT KEYWORD FILTER REMOVED EVERYTHING")
-
-            print("\nFirst unfiltered links:")
-
-            for title, link in valid_links[:5]:
-                print(f"  - {title}")
-                print(f"    {link}")
-        else:
-            print("\nRESULT: PAGE ACCESSIBLE, BUT SELECTOR FOUND NO USABLE LINKS")
-
-    except requests.RequestException as error:
-        print(f"\nRESULT: HTTP ERROR: {error}")
-
-    except Exception as error:
-        print(f"\nRESULT: PARSING ERROR: {error}")
+def print_release_preview(source, html):
+    soup = BeautifulSoup(html, "html.parser")
+    bullet_selector = source.get("bullet_selector", "main li")
+    bullets = soup.select(bullet_selector)
+    print(f"  - bullets found: {len(bullets)}")
+    for bullet in bullets[:3]:
+        text = bullet.get_text(" ", strip=True)[:200]
+        print(f"    * {text}")
 
 
 def main():
     config = load_config()
-    keywords = config.get("keep_keywords", [])
-
     print(f"Configuration: {CONFIG_PATH}")
-    print(f"Keywords     : {keywords}")
 
-    rss_sources = config.get("rss_feeds", [])
-    scrape_sources = config.get("scrape_pages", [])
+    for source in config.get("scrape_pages", []):
+        print("\n" + "=" * 80)
+        print(f"SCRAPE SOURCE: {source['name']}")
+        print(f"URL: {source['url']}")
+        try:
+            html, resolved_url = fetch_page_html(source["url"], source, config)
+            print(f"Resolved URL: {resolved_url}")
+            print_card_preview(source, html)
+        except Exception as error:  # pragma: no cover - diagnostic script
+            print(f"ERROR: {error}")
 
-    for source in rss_sources:
-        test_rss_source(source)
-
-    for source in scrape_sources:
-        test_scrape_source(source, keywords)
+    for source in config.get("content_pages", []):
+        if source.get("type") != "monthly_release_notes":
+            continue
+        print("\n" + "=" * 80)
+        print(f"RELEASE SOURCE: {source['name']}")
+        url, year, month = build_monthly_url(source.get("url_template", ""))
+        print(f"Generated URL: {url}")
+        print(f"Contains &month=: {'&month=' in url}")
+        print(f"Contains &amp;month=: {'&amp;month=' in url}")
+        try:
+            html, resolved_url = fetch_page_html(url, source, config)
+            print(f"Resolved URL: {resolved_url}")
+            print_release_preview(source, html)
+        except Exception as error:  # pragma: no cover - diagnostic script
+            print(f"ERROR: {error}")
 
 
 if __name__ == "__main__":
