@@ -1,18 +1,21 @@
 """
-Résumé + classification des nouveaux items via un provider LLM configurable.
-Supporte Groq et Gemini, avec fallback local si le provider échoue.
+Résumé + classification des nouveaux items via Gemini API.
+Gère les rate limits avec retry exponentiel et traitement par lots.
 """
 import json
 import logging
 import os
+import time
 
-from groq import Groq
 import requests
 
 logger = logging.getLogger(__name__)
 
-GROQ_MODEL = "llama-3.3-70b-versatile"
-GEMINI_MODEL = "gemini-2.0-flash"
+# gemini-2.0-flash a souvent un quota free tier à 0 sur les nouveaux comptes ;
+# gemini-flash-lite-latest fonctionne avec le free tier actuel.
+DEFAULT_GEMINI_MODEL = "gemini-flash-lite-latest"
+BATCH_SIZE = 8
+MAX_RETRIES = 5
 
 SYSTEM_PROMPT = """Tu es un assistant qui aide une équipe de data engineers travaillant avec Boomi \
 (iPaaS d'intégration) à suivre les nouveautés de la plateforme.
@@ -35,6 +38,10 @@ au format suivant :
 """
 
 
+def _gemini_model() -> str:
+    return os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL).strip() or DEFAULT_GEMINI_MODEL
+
+
 def _fallback_local(items: list[dict], categories: list[str]) -> list[dict]:
     return [
         {
@@ -47,42 +54,39 @@ def _fallback_local(items: list[dict], categories: list[str]) -> list[dict]:
     ]
 
 
-def _call_groq(items: list[dict], categories: list[str]) -> list[dict]:
-    api_key = os.environ.get("GROQ_API_KEY")
-    if not api_key:
-        raise RuntimeError("GROQ_API_KEY manquant dans l'environnement")
+def _retry_after_seconds(response: requests.Response, attempt: int) -> float:
+    retry_after = response.headers.get("Retry-After")
+    if retry_after:
+        try:
+            return max(float(retry_after), 1.0)
+        except ValueError:
+            pass
 
-    client = Groq(api_key=api_key)
+    try:
+        message = response.json().get("error", {}).get("message", "")
+        if "retry in" in message.lower():
+            fragment = message.lower().split("retry in", 1)[1].strip()
+            seconds = float(fragment.split("s", 1)[0].strip())
+            return max(seconds, 1.0)
+    except (ValueError, AttributeError, json.JSONDecodeError, IndexError):
+        pass
+
+    return float(2 ** attempt)
+
+
+def _call_gemini_batch(items: list[dict], categories: list[str]) -> list[dict]:
+    api_key = os.environ.get("GOOGLE_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "GOOGLE_API_KEY manquant. Créez une clé sur https://aistudio.google.com/apikey"
+        )
+
+    model = _gemini_model()
     user_payload = json.dumps(
         [{"id": it["id"], "title": it["title"], "source": it["source"]} for it in items],
         ensure_ascii=False,
     )
     system_prompt = SYSTEM_PROMPT.format(categories=", ".join(categories))
-
-    completion = client.chat.completions.create(
-        model=GROQ_MODEL,
-        temperature=0.2,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Voici les items à traiter :\n{user_payload}"},
-        ],
-    )
-    raw = completion.choices[0].message.content.strip()
-    raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    return _parse_llm_response(raw, items)
-
-
-def _call_gemini(items: list[dict], categories: list[str]) -> list[dict]:
-    api_key = os.environ.get("GOOGLE_API_KEY")
-    if not api_key:
-        raise RuntimeError("GOOGLE_API_KEY manquant dans l'environnement")
-
-    user_payload = json.dumps(
-        [{"id": it["id"], "title": it["title"], "source": it["source"]} for it in items],
-        ensure_ascii=False,
-    )
-    system_prompt = SYSTEM_PROMPT.format(categories=", ".join(categories))
-
     payload = {
         "contents": [
             {
@@ -93,20 +97,44 @@ def _call_gemini(items: list[dict], categories: list[str]) -> list[dict]:
         "generationConfig": {"temperature": 0.2},
     }
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={api_key}"
-    response = requests.post(url, json=payload, timeout=30)
-    response.raise_for_status()
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
 
-    data = response.json()
-    raw = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-    raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    return _parse_llm_response(raw, items)
+    for attempt in range(MAX_RETRIES):
+        response = requests.post(url, headers=headers, json=payload, timeout=60)
+
+        if response.status_code in (429, 503):
+            wait_time = _retry_after_seconds(response, attempt)
+            logger.warning(
+                "Gemini %s (%s), attente %.1fs avant retry %d/%d...",
+                response.status_code,
+                model,
+                wait_time,
+                attempt + 1,
+                MAX_RETRIES,
+            )
+            time.sleep(wait_time)
+            continue
+
+        if response.status_code >= 400:
+            try:
+                detail = response.json().get("error", {}).get("message", response.text)
+            except json.JSONDecodeError:
+                detail = response.text
+            raise RuntimeError(f"Gemini HTTP {response.status_code}: {detail[:300]}")
+
+        data = response.json()
+        raw = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+        raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        return _parse_llm_response(raw, items)
+
+    raise RuntimeError(f"Gemini indisponible après {MAX_RETRIES} tentatives (modèle {model})")
 
 
 def _parse_llm_response(raw: str, items: list[dict]) -> list[dict]:
     try:
         parsed = json.loads(raw)
-    except json.JSONDecodeError as exc:
+    except json.JSONDecodeError:
         logger.error("Réponse LLM non-JSON, fallback sans résumé. Réponse brute : %s", raw[:500])
         return _fallback_local(items, [])
 
@@ -124,19 +152,36 @@ def _parse_llm_response(raw: str, items: list[dict]) -> list[dict]:
 
 
 def summarize_items(items: list[dict], categories: list[str]) -> list[dict]:
-    """Enrichit chaque item avec un résumé, une catégorie et un niveau d'importance."""
+    """Enrichit chaque item avec résumé, catégorie et importance via Gemini."""
     if not items:
         return []
 
-    for provider_name, provider_func in (
-        ("Gemini", _call_gemini),
-        ("Groq", _call_groq),
-    ):
+    model = _gemini_model()
+    logger.info("Résumé via Gemini (%s, %d items)...", model, len(items))
+
+    enriched: list[dict] = []
+    fallback_batches = 0
+    for start in range(0, len(items), BATCH_SIZE):
+        batch = items[start : start + BATCH_SIZE]
         try:
-            logger.info("Utilisation du provider %s", provider_name)
-            return provider_func(items, categories)
+            enriched.extend(_call_gemini_batch(batch, categories))
         except Exception as exc:
-            logger.warning("Échec de l'appel %s, utilisation du fallback local : %s", provider_name, exc)
+            fallback_batches += 1
+            logger.warning(
+                "Échec Gemini sur le lot %d-%d : %s",
+                start + 1,
+                start + len(batch),
+                exc,
+            )
+            enriched.extend(_fallback_local(batch, categories))
 
-    return _fallback_local(items, categories)
+        if start + BATCH_SIZE < len(items):
+            time.sleep(1)
 
+    if fallback_batches:
+        logger.warning(
+            "%d lot(s) traité(s) en fallback local — lancez : python scripts/test_gemini.py",
+            fallback_batches,
+        )
+
+    return enriched

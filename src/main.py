@@ -78,7 +78,7 @@ def main():
         logger.info("Rien de nouveau cette semaine, pas d'envoi.")
         return
 
-    logger.info("Résumé et classification via Groq...")
+    logger.info("Résumé et classification via Gemini...")
     enriched_items = summarize_items(new_items, config.get("categories", []))
 
     logger.info("Envoi du digest vers Teams...")
