@@ -31,9 +31,27 @@ def load_config() -> dict:
 def load_seen_ids() -> set:
     if not os.path.exists(SEEN_PATH):
         return set()
-    with open(SEEN_PATH, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    return set(data.get("seen_ids", []))
+
+    try:
+        with open(SEEN_PATH, "r", encoding="utf-8") as f:
+            content = f.read().strip()
+        if not content:
+            return set()
+
+        data = json.loads(content)
+        if isinstance(data, dict):
+            seen_ids = data.get("seen_ids", [])
+        elif isinstance(data, list):
+            seen_ids = data
+        else:
+            seen_ids = []
+
+        if isinstance(seen_ids, list):
+            return {item for item in seen_ids if isinstance(item, str)}
+        return set()
+    except json.JSONDecodeError:
+        logger.warning("Fichier d'historique invalide, réinitialisation de %s", SEEN_PATH)
+        return set()
 
 
 def save_seen_ids(seen_ids: set) -> None:

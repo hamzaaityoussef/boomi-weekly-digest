@@ -100,7 +100,8 @@ def send_to_teams(items: list[dict]) -> None:
         raise RuntimeError("TEAMS_WEBHOOK_URL manquant dans l'environnement")
 
     payload = build_adaptive_card(items)
-    resp = requests.post(webhook_url, json=payload, timeout=15)
+    verify_ssl = os.environ.get("TEAMS_SKIP_SSL_VERIFY", "0") == "1"
+    resp = requests.post(webhook_url, json=payload, timeout=15, verify=not verify_ssl)
 
     if resp.status_code >= 300:
         logger.error("Échec envoi Teams (%s) : %s", resp.status_code, resp.text[:500])
