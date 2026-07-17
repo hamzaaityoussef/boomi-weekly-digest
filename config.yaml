@@ -7,38 +7,82 @@ rss_feeds:
     type: "rss"
 
 scrape_pages:
-  - name: "Boomi Community - Latest content"
+  # Section "What's new" — cartes avec titre, extrait et lien "Read More"
+  - name: "Boomi Community - What's new"
     url: "https://community.boomi.com/boomi_community"
     item_selector: "#cardScroll .card"
     title_selector: ".card-title"
     description_selector: ".card-excerpt"
-    link_selector: ".card-link"
+    link_selector: "a.card-link"
+    keep_keywords: []
+    no_fallback: true
 
+  # Notes de version help.boomi.com — puces "We added these features"
+  # {year} et {month} sont remplacés automatiquement (ex. July 2026)
   - name: "Boomi Platform Release Notes"
     url: "https://help.boomi.com/docs/Atomsphere/Release_Notes/Platform/?year={year}&month={month}"
-    item_selector: "main a"
+    item_selector: ".release-highlight-wrapper li"
+    title_selector: "p"
+    description_selector: "p"
     link_selector: "a"
+    page_link: true
+    use_description: true
+    keep_keywords: []
+    no_fallback: true
 
-  - name: "Boomi Product Updates"
+  - name: "Boomi AI Release Notes"
+    url: "https://help.boomi.com/docs/Atomsphere/Release_Notes/AI/?year={year}&month={month}"
+    item_selector: ".release-highlight-wrapper li"
+    title_selector: "p"
+    description_selector: "p"
+    link_selector: "a"
+    page_link: true
+    use_description: true
+    keep_keywords: []
+    no_fallback: true
+
+  - name: "Boomi Runtime Release Notes"
+    url: "https://help.boomi.com/docs/Atomsphere/Release_Notes/Runtime/?year={year}&month={month}"
+    item_selector: ".release-highlight-wrapper li"
+    title_selector: "p"
+    description_selector: "p"
+    link_selector: "a"
+    page_link: true
+    use_description: true
+    keep_keywords: []
+    no_fallback: true
+
+  - name: "Boomi Integration Release Notes"
+    url: "https://help.boomi.com/docs/Atomsphere/Release_Notes/Integration/?year={year}&month={month}"
+    item_selector: ".release-highlight-wrapper li"
+    title_selector: "p"
+    description_selector: "p"
+    link_selector: "a"
+    page_link: true
+    use_description: true
+    keep_keywords: []
+    no_fallback: true
+
+  # Section "Latest Product Releases" uniquement (slider blog releases)
+  - name: "Boomi Product Updates - Latest releases"
     url: "https://boomi.com/product-updates/"
-    item_selector: "#swiper-wrapper-8f12db5fe888ea8d .rc-item"
+    item_selector: ".rc-slide-item .rc-item"
     title_selector: "h2.rc-title"
     description_selector: "p.rc-summary"
     link_selector: "a"
+    keep_keywords: []
+    no_fallback: true
 
-# Mots-clés utilisés pour filtrer le bruit (liens de navigation, footer, etc.)
-# Un lien scrapé n'est retenu que si son texte contient un de ces mots-clés
-# OU si vous laissez la liste vide pour ne rien filtrer (déconseillé, trop de bruit).
+# Mots-clés utilisés pour filtrer le bruit sur les sources qui n'ont pas keep_keywords: []
 keep_keywords:
   - "release"
   - "update"
-  - "20"          # capte les années (2026, 2025...) et les mois numérotés
+  - "20"
   - "connector"
   - "GA"
   - "API"
   - "security"
 
-# Catégories utilisées par le LLM pour classer chaque item
 categories:
   - "Nouveau connecteur"
   - "Fonctionnalité IA / Agent"
@@ -47,4 +91,3 @@ categories:
   - "API Management"
   - "Amélioration générale"
   - "Autre"
-

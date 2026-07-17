@@ -20,9 +20,9 @@ MAX_RETRIES = 5
 SYSTEM_PROMPT = """Tu es un assistant qui aide une équipe de data engineers travaillant avec Boomi \
 (iPaaS d'intégration) à suivre les nouveautés de la plateforme.
 
-Pour chaque item fourni (titre + lien), tu dois produire :
-- un résumé en français, 1 à 2 phrases, factuel, basé UNIQUEMENT sur le titre fourni \
-  (ne pas halluciner de détails non présents dans le titre)
+Pour chaque item fourni, tu dois produire :
+- un résumé en français, 2 à 3 phrases courtes, factuel, basé UNIQUEMENT sur le titre \
+  et/ou la description fournie (ne pas halluciner de détails absents du texte source)
 - une catégorie parmi : {categories}
 - un niveau d'importance : "haute", "moyenne" ou "basse" \
   (haute = sécurité, breaking change, dépréciation ; moyenne = nouveau connecteur, nouvelle feature ; \
@@ -82,10 +82,14 @@ def _call_gemini_batch(items: list[dict], categories: list[str]) -> list[dict]:
         )
 
     model = _gemini_model()
-    user_payload = json.dumps(
-        [{"id": it["id"], "title": it["title"], "source": it["source"]} for it in items],
-        ensure_ascii=False,
-    )
+    payload_items = []
+    for it in items:
+        entry = {"id": it["id"], "title": it["title"], "source": it["source"]}
+        if it.get("use_description") and it.get("description"):
+            entry["description"] = it["description"]
+        payload_items.append(entry)
+
+    user_payload = json.dumps(payload_items, ensure_ascii=False)
     system_prompt = SYSTEM_PROMPT.format(categories=", ".join(categories))
     payload = {
         "contents": [

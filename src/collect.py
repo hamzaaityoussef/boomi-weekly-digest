@@ -55,6 +55,12 @@ def collect_rss(feed_cfg: dict) -> list[dict]:
     return items
 
 
+def _page_keep_keywords(page_cfg: dict, global_keep_keywords: list[str]) -> list[str]:
+    if "keep_keywords" in page_cfg:
+        return page_cfg["keep_keywords"]
+    return global_keep_keywords
+
+
 def collect_scrape(page_cfg: dict, keep_keywords: list[str]) -> list[dict]:
     items = []
     try:
@@ -63,12 +69,15 @@ def collect_scrape(page_cfg: dict, keep_keywords: list[str]) -> list[dict]:
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
 
+        page_keywords = _page_keep_keywords(page_cfg, keep_keywords)
+        use_page_link = page_cfg.get("page_link", False)
+
         item_selector = page_cfg.get("item_selector")
         candidates = []
         if item_selector:
             candidates.extend(soup.select(item_selector))
 
-        if not candidates:
+        if not candidates and not page_cfg.get("no_fallback", False):
             for fallback_selector in [
                 page_cfg.get("link_selector", "a"),
                 "main a",
@@ -101,17 +110,23 @@ def collect_scrape(page_cfg: dict, keep_keywords: list[str]) -> list[dict]:
                 title = title_el.get_text(strip=True) if title_el else ""
                 description = desc_el.get_text(" ", strip=True) if desc_el else ""
                 href = link_el.get("href", "") if link_el else ""
+                if not href and use_page_link:
+                    href = page_url
             else:
                 title = block.get_text(strip=True)
                 href = block.get("href", "")
                 description = ""
 
-            if not title or not href:
+            if not title:
+                continue
+            if not href and use_page_link:
+                href = page_url
+            if not href:
                 continue
 
-            if keep_keywords:
-                text_lower = title.lower()
-                if not any(kw.lower() in text_lower for kw in keep_keywords):
+            if page_keywords:
+                text_lower = f"{title} {description}".lower()
+                if not any(kw.lower() in text_lower for kw in page_keywords):
                     continue
 
             if href.startswith("/"):
@@ -120,18 +135,23 @@ def collect_scrape(page_cfg: dict, keep_keywords: list[str]) -> list[dict]:
             elif not href.startswith("http"):
                 continue
 
-            if href in seen:
+            dedupe_key = f"{href}|{title}" if use_page_link else href
+            if dedupe_key in seen:
                 continue
-            seen.add(href)
+            seen.add(dedupe_key)
 
-            items.append({
-                "id": make_id(href),
+            item_id = make_id(f"{page_url}|{title}") if use_page_link else make_id(href)
+            item = {
+                "id": item_id,
                 "title": title,
                 "link": href,
                 "description": description,
                 "source": page_cfg["name"],
                 "published": "",
-            })
+            }
+            if page_cfg.get("use_description"):
+                item["use_description"] = True
+            items.append(item)
     except Exception as exc:
         logger.error("Erreur lors du scraping de %s : %s", page_cfg["name"], exc)
     return items

@@ -33,15 +33,19 @@ def test_resolve_url_template_uses_current_month_and_year(monkeypatch):
 def test_collect_scrape_supports_item_and_nested_selectors(monkeypatch):
     html = """
     <html><body>
-      <div class="rc-item">
-        <h2 class="tc-title">Latest release</h2>
-        <p class="rc-desc">A useful description</p>
-        <a href="/releases/latest">Read more</a>
+      <div class="rc-slide-item">
+        <div class="rc-item">
+          <h2 class="rc-title">Latest release</h2>
+          <p class="rc-summary">A useful description</p>
+          <a href="/releases/latest">Read more</a>
+        </div>
       </div>
-      <div class="rc-item">
-        <h2 class="tc-title">Another release</h2>
-        <p class="rc-desc">Another useful description</p>
-        <a href="https://example.com/another">Read more</a>
+      <div class="rc-slide-item">
+        <div class="rc-item">
+          <h2 class="rc-title">Another release</h2>
+          <p class="rc-summary">Another useful description</p>
+          <a href="https://example.com/another">Read more</a>
+        </div>
       </div>
     </body></html>
     """
@@ -54,10 +58,11 @@ def test_collect_scrape_supports_item_and_nested_selectors(monkeypatch):
     page_cfg = {
         "name": "Boomi Product Updates",
         "url": "https://boomi.com/product-updates/",
-        "item_selector": ".rc-item",
-        "title_selector": "h2.tc-title",
-        "description_selector": "p.rc-desc",
+        "item_selector": ".rc-slide-item .rc-item",
+        "title_selector": "h2.rc-title",
+        "description_selector": "p.rc-summary",
         "link_selector": "a",
+        "no_fallback": True,
     }
 
     items = collect_scrape(page_cfg, [])
