@@ -11,8 +11,7 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-# gemini-2.0-flash a souvent un quota free tier à 0 sur les nouveaux comptes ;
-# gemini-flash-lite-latest fonctionne avec le free tier actuel.
+
 DEFAULT_GEMINI_MODEL = "gemini-flash-lite-latest"
 BATCH_SIZE = 8
 MAX_RETRIES = 5

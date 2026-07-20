@@ -2,13 +2,11 @@ name: Boomi Weekly Digest
 
 on:
   schedule:
-    # Tous les mardi à 9h00 heure de Paris (7h00 UTC en hiver, 6h00 UTC en été)
-    # GitHub Actions ne gère pas le fuseau horaire local : ajustez si besoin.
     - cron: "0 9 * * 2"
   workflow_dispatch: {}   
 
 permissions:
-  contents: write   # nécessaire pour committer le fichier data/seen_items.json mis à jour
+  contents: write   
 
 jobs:
   run-digest:
