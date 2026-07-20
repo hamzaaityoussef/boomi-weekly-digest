@@ -1,33 +1,31 @@
 """
-Résumé + classification des nouveaux items via une API LLM.
-Support : Groq (si GROQ_API_KEY est défini) ou Google Gemini (si GOOGLE_API_KEY est défini).
-En cas d'échec, un fallback local simple est utilisé.
+Résumé + classification des nouveaux items via Gemini API.
+Gère les rate limits avec retry exponentiel et traitement par lots.
 """
 import json
 import logging
 import os
+import time
 
-import httpx
 import requests
-from groq import Groq
 
 logger = logging.getLogger(__name__)
 
-GROQ_MODEL = "llama-3.3-70b-versatile"
-GOOGLE_MODEL = os.environ.get("GOOGLE_MODEL", "gemini-2.0-flash")
+
+DEFAULT_GEMINI_MODEL = "gemini-flash-lite-latest"
+BATCH_SIZE = 8
+MAX_RETRIES = 5
 
 SYSTEM_PROMPT = """Tu es un assistant qui aide une équipe de data engineers travaillant avec Boomi \
 (iPaaS d'intégration) à suivre les nouveautés de la plateforme.
 
-Pour chaque item fourni (titre + contenu + lien), tu dois produire :
-- un résumé en français, 1 à 2 phrases, factuel, basé UNIQUEMENT sur le contenu fourni \
-  (ne pas halluciner de détails non présents dans le contenu)
+Pour chaque item fourni, tu dois produire :
+- un résumé en français, 2 à 3 phrases courtes, factuel, basé UNIQUEMENT sur le titre \
+  et/ou la description fournie (ne pas halluciner de détails absents du texte source)
 - une catégorie parmi : {categories}
 - un niveau d'importance : "haute", "moyenne" ou "basse" \
   (haute = sécurité, breaking change, dépréciation ; moyenne = nouveau connecteur, nouvelle feature ; \
   basse = amélioration mineure)
-
-Pour les release notes mensuelles, limite le résumé à trois lignes concises maximum.
 
 Réponds UNIQUEMENT avec un objet JSON valide, sans texte avant/après, sans balises markdown, \
 au format suivant :
@@ -39,151 +37,154 @@ au format suivant :
 """
 
 
-def _should_skip_ssl_verification() -> bool:
-    return os.environ.get("GROQ_SKIP_SSL_VERIFY", "").strip().lower() in {"1", "true", "yes", "on"}
+def _gemini_model() -> str:
+    return os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL).strip() or DEFAULT_GEMINI_MODEL
 
 
-def _is_ssl_error(exc: Exception) -> bool:
-    message = str(exc).lower()
-    return any(token in message for token in ["ssl", "certificate", "verify failed", "self-signed"])
-
-
-def create_groq_client(api_key: str):
-    if _should_skip_ssl_verification():
-        logger.warning("Vérification SSL désactivée pour Groq via GROQ_SKIP_SSL_VERIFY=1")
-        return Groq(api_key=api_key, http_client=httpx.Client(verify=False))
-
-    try:
-        return Groq(api_key=api_key)
-    except Exception as exc:
-        if _is_ssl_error(exc):
-            logger.warning("Échec de vérification SSL avec Groq, tentative avec verification SSL désactivée.")
-            return Groq(api_key=api_key, http_client=httpx.Client(verify=False))
-        raise
-
-
-def _infer_category(title: str, categories: list[str]) -> str:
-    text = title.lower()
-    if any(k in text for k in ["connector", "connecteur"]):
-        return next((c for c in categories if "connecteur" in c.lower()), "Autre")
-    if any(k in text for k in ["agent", "ai", "genai", "llm"]):
-        return next((c for c in categories if "ia" in c.lower() or "agent" in c.lower()), "Autre")
-    if any(k in text for k in ["security", "sécurité", "secure", "vuln"]):
-        return next((c for c in categories if "sécurité" in c.lower() or "security" in c.lower()), "Autre")
-    if any(k in text for k in ["deprec", "breaking", "obsolete", "retired"]):
-        return next((c for c in categories if "dépréci" in c.lower() or "breaking" in c.lower()), "Autre")
-    if any(k in text for k in ["api", "management"]):
-        return next((c for c in categories if "api" in c.lower()), "Autre")
-    return next((c for c in categories if c.lower() == "autre"), "Autre")
-
-
-def _infer_importance(title: str) -> str:
-    text = title.lower()
-    if any(k in text for k in ["security", "sécurité", "deprec", "breaking", "obsolete", "retired"]):
-        return "haute"
-    if any(k in text for k in ["connector", "agent", "ai", "api", "update", "release"]):
-        return "moyenne"
-    return "basse"
-
-
-def _fallback_enrichment(items: list[dict], categories: list[str]) -> list[dict]:
+def _fallback_local(items: list[dict], categories: list[str]) -> list[dict]:
     return [
         {
             **it,
-            "summary": it["title"],
-            "category": _infer_category(it["title"], categories),
-            "importance": _infer_importance(it["title"]),
+            "summary": it.get("title", "Nouveau contenu Boomi"),
+            "category": categories[0] if categories else "Autre",
+            "importance": "moyenne",
         }
         for it in items
     ]
 
 
-def resolve_provider() -> str | None:
-    if os.environ.get("GOOGLE_API_KEY"):
-        return "google"
-    if os.environ.get("GROQ_API_KEY"):
-        return "groq"
-    return None
+def _retry_after_seconds(response: requests.Response, attempt: int) -> float:
+    retry_after = response.headers.get("Retry-After")
+    if retry_after:
+        try:
+            return max(float(retry_after), 1.0)
+        except ValueError:
+            pass
+
+    try:
+        message = response.json().get("error", {}).get("message", "")
+        if "retry in" in message.lower():
+            fragment = message.lower().split("retry in", 1)[1].strip()
+            seconds = float(fragment.split("s", 1)[0].strip())
+            return max(seconds, 1.0)
+    except (ValueError, AttributeError, json.JSONDecodeError, IndexError):
+        pass
+
+    return float(2 ** attempt)
 
 
-def _call_google(api_key: str, prompt: str) -> str:
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GOOGLE_MODEL}:generateContent?key={api_key}"
+def _call_gemini_batch(items: list[dict], categories: list[str]) -> list[dict]:
+    api_key = os.environ.get("GOOGLE_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "GOOGLE_API_KEY manquant. Créez une clé sur https://aistudio.google.com/apikey"
+        )
+
+    model = _gemini_model()
+    payload_items = []
+    for it in items:
+        entry = {"id": it["id"], "title": it["title"], "source": it["source"]}
+        if it.get("use_description") and it.get("description"):
+            entry["description"] = it["description"]
+        payload_items.append(entry)
+
+    user_payload = json.dumps(payload_items, ensure_ascii=False)
+    system_prompt = SYSTEM_PROMPT.format(categories=", ".join(categories))
     payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": 0.2,
-            "responseMimeType": "application/json",
-        },
+        "contents": [
+            {
+                "role": "user",
+                "parts": [{"text": f"{system_prompt}\n\nVoici les items à traiter :\n{user_payload}"}],
+            }
+        ],
+        "generationConfig": {"temperature": 0.2},
     }
-    response = requests.post(url, json=payload, timeout=60)
-    response.raise_for_status()
-    data = response.json()
-    return data["candidates"][0]["content"]["parts"][0]["text"]
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
+
+    for attempt in range(MAX_RETRIES):
+        response = requests.post(url, headers=headers, json=payload, timeout=60)
+
+        if response.status_code in (429, 503):
+            wait_time = _retry_after_seconds(response, attempt)
+            logger.warning(
+                "Gemini %s (%s), attente %.1fs avant retry %d/%d...",
+                response.status_code,
+                model,
+                wait_time,
+                attempt + 1,
+                MAX_RETRIES,
+            )
+            time.sleep(wait_time)
+            continue
+
+        if response.status_code >= 400:
+            try:
+                detail = response.json().get("error", {}).get("message", response.text)
+            except json.JSONDecodeError:
+                detail = response.text
+            raise RuntimeError(f"Gemini HTTP {response.status_code}: {detail[:300]}")
+
+        data = response.json()
+        raw = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+        raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        return _parse_llm_response(raw, items)
+
+    raise RuntimeError(f"Gemini indisponible après {MAX_RETRIES} tentatives (modèle {model})")
+
+
+def _parse_llm_response(raw: str, items: list[dict]) -> list[dict]:
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.error("Réponse LLM non-JSON, fallback sans résumé. Réponse brute : %s", raw[:500])
+        return _fallback_local(items, [])
+
+    enrich_by_id = {e["id"]: e for e in parsed.get("items", [])}
+    enriched = []
+    for it in items:
+        extra = enrich_by_id.get(it["id"], {})
+        enriched.append({
+            **it,
+            "summary": extra.get("summary", it["title"]),
+            "category": extra.get("category", "Autre"),
+            "importance": extra.get("importance", "moyenne"),
+        })
+    return enriched
 
 
 def summarize_items(items: list[dict], categories: list[str]) -> list[dict]:
-    """Enrichit chaque item avec un résumé, une catégorie et un niveau d'importance."""
+    """Enrichit chaque item avec résumé, catégorie et importance via Gemini."""
     if not items:
         return []
 
-    provider = resolve_provider()
-    if provider is None:
-        logger.warning("Aucune clé API fournie, utilisation du fallback local")
-        return _fallback_enrichment(items, categories)
+    model = _gemini_model()
+    logger.info("Résumé via Gemini (%s, %d items)...", model, len(items))
 
-    try:
-        user_payload = json.dumps(
-            [
-                {
-                    "id": it["id"],
-                    "title": it["title"],
-                    "source": it["source"],
-                    "content": it.get("content") or it.get("description") or it.get("title") or "",
-                }
-                for it in items
-            ],
-            ensure_ascii=False,
+    enriched: list[dict] = []
+    fallback_batches = 0
+    for start in range(0, len(items), BATCH_SIZE):
+        batch = items[start : start + BATCH_SIZE]
+        try:
+            enriched.extend(_call_gemini_batch(batch, categories))
+        except Exception as exc:
+            fallback_batches += 1
+            logger.warning(
+                "Échec Gemini sur le lot %d-%d : %s",
+                start + 1,
+                start + len(batch),
+                exc,
+            )
+            enriched.extend(_fallback_local(batch, categories))
+
+        if start + BATCH_SIZE < len(items):
+            time.sleep(1)
+
+    if fallback_batches:
+        logger.warning(
+            "%d lot(s) traité(s) en fallback local — lancez : python scripts/test_gemini.py",
+            fallback_batches,
         )
 
-        system_prompt = SYSTEM_PROMPT.format(categories=", ".join(categories))
-        prompt = f"{system_prompt}\n\nVoici les items à traiter :\n{user_payload}"
-
-        if provider == "google":
-            logger.info("Utilisation du provider Google Gemini")
-            raw = _call_google(os.environ["GOOGLE_API_KEY"], prompt)
-        else:
-            logger.info("Utilisation du provider Groq")
-            client = create_groq_client(os.environ["GROQ_API_KEY"])
-            completion = client.chat.completions.create(
-                model=GROQ_MODEL,
-                temperature=0.2,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Voici les items à traiter :\n{user_payload}"},
-                ],
-            )
-            raw = completion.choices[0].message.content.strip()
-
-        raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError:
-            logger.error("Réponse LLM non-JSON, fallback sans résumé. Réponse brute : %s", raw[:500])
-            return _fallback_enrichment(items, categories)
-
-        enrich_by_id = {e["id"]: e for e in parsed.get("items", [])}
-
-        enriched = []
-        for it in items:
-            extra = enrich_by_id.get(it["id"], {})
-            enriched.append({
-                **it,
-                "summary": extra.get("summary", it["title"]),
-                "category": extra.get("category", "Autre"),
-                "importance": extra.get("importance", "moyenne"),
-            })
-        return enriched
-    except Exception as exc:
-        logger.warning("Échec de l'appel LLM, utilisation du fallback local : %s", exc)
-        return _fallback_enrichment(items, categories)
+    return enriched
