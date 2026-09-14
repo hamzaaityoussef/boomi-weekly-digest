@@ -24,10 +24,10 @@ def make_id(link: str) -> str:
 
 
 def resolve_url_template(url: str, now: datetime | None = None) -> str:
-    """Remplace les placeholders {year} et {month} par la date courante."""
+    """Remplace les placeholders de date par la date courante."""
     current = now or datetime.now()
     month_name = current.strftime("%B")
-    return url.format(year=current.year, month=month_name)
+    return url.format(year=current.year, month=month_name, month_slug=month_name.lower())
 
 
 def collect_rss(feed_cfg: dict) -> list[dict]:

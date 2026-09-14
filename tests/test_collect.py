@@ -23,11 +23,11 @@ class DummyResponse:
 def test_resolve_url_template_uses_current_month_and_year(monkeypatch):
     fixed_now = datetime(2026, 7, 15)
     url = resolve_url_template(
-        "https://help.boomi.com/docs/Atomsphere/Release_Notes/Platform/?year={year}&month={month}",
+      "https://boomi.com/blog/{month_slug}-{month}-{year}",
         fixed_now,
     )
 
-    assert url == "https://help.boomi.com/docs/Atomsphere/Release_Notes/Platform/?year=2026&month=July"
+    assert url == "https://boomi.com/blog/july-July-2026"
 
 
 def test_collect_scrape_supports_item_and_nested_selectors(monkeypatch):
@@ -72,3 +72,42 @@ def test_collect_scrape_supports_item_and_nested_selectors(monkeypatch):
     assert items[0]["description"] == "A useful description"
     assert items[0]["link"] == "https://boomi.com/releases/latest"
     assert items[1]["link"] == "https://example.com/another"
+
+
+def test_collect_scrape_supports_blog_release_article(monkeypatch):
+    html = """
+    <html><body>
+      <div class="post-detail">
+        <div class="post-content">
+          <h1>Boomi Integration and Automation Platform Release - September 2026</h1>
+          <section class="blog-content-wrapper">
+            <p>The September 2026 release includes new platform capabilities.</p>
+          </section>
+        </div>
+      </div>
+    </body></html>
+    """
+
+    def fake_get(url, headers=None, timeout=None):
+        return DummyResponse(html)
+
+    monkeypatch.setattr("src.collect.requests.get", fake_get)
+
+    page_cfg = {
+        "name": "Boomi Blog - Platform Release",
+        "url": "https://boomi.com/blog/everything-you-want-to-know-about-the-september-2026-boomi-integration-and-automation-platform-release/",
+        "item_selector": ".post-detail .post-content",
+        "title_selector": "h1",
+        "description_selector": ".blog-content-wrapper",
+        "page_link": True,
+        "use_description": True,
+        "keep_keywords": [],
+        "no_fallback": True,
+    }
+
+    items = collect_scrape(page_cfg, [])
+
+    assert len(items) == 1
+    assert items[0]["title"] == "Boomi Integration and Automation Platform Release - September 2026"
+    assert "new platform capabilities" in items[0]["description"]
+    assert items[0]["link"] == page_cfg["url"]
