@@ -77,9 +77,9 @@ def test_collect_scrape_supports_item_and_nested_selectors(monkeypatch):
 def test_collect_scrape_supports_blog_release_article(monkeypatch):
     html = """
     <html><body>
+      <h1>Boomi Integration and Automation Platform Release - September 2026</h1>
       <div class="post-detail">
         <div class="post-content">
-          <h1>Boomi Integration and Automation Platform Release - September 2026</h1>
           <section class="blog-content-wrapper">
             <p>The September 2026 release includes new platform capabilities.</p>
           </section>
@@ -98,7 +98,9 @@ def test_collect_scrape_supports_blog_release_article(monkeypatch):
         "url": "https://boomi.com/blog/everything-you-want-to-know-about-the-september-2026-boomi-integration-and-automation-platform-release/",
         "item_selector": ".post-detail .post-content",
         "title_selector": "h1",
+        "page_title_selector": "h1",
         "description_selector": ".blog-content-wrapper",
+        "link_selector": ".release-article-link",
         "page_link": True,
         "use_description": True,
         "keep_keywords": [],
@@ -111,3 +113,36 @@ def test_collect_scrape_supports_blog_release_article(monkeypatch):
     assert items[0]["title"] == "Boomi Integration and Automation Platform Release - September 2026"
     assert "new platform capabilities" in items[0]["description"]
     assert items[0]["link"] == page_cfg["url"]
+
+
+def test_collect_scrape_accepts_fallback_blog_content_selector(monkeypatch):
+    html = """
+    <html><body>
+      <h1>Boomi Integration and Automation Platform Release - September 2026</h1>
+      <div class="post-content">
+        <section class="blog-content-wrapper">
+          <p>Release highlights.</p>
+        </section>
+      </div>
+    </body></html>
+    """
+
+    monkeypatch.setattr("src.collect.requests.get", lambda *args, **kwargs: DummyResponse(html))
+
+    items = collect_scrape(
+        {
+            "name": "Boomi Blog - Platform Release",
+            "url": "https://boomi.com/blog/release/",
+            "item_selector": ".post-detail .post-content, .post-content",
+            "title_selector": "h1",
+            "page_title_selector": "h1",
+            "description_selector": ".blog-content-wrapper",
+            "link_selector": ".release-article-link",
+            "page_link": True,
+            "no_fallback": True,
+        },
+        [],
+    )
+
+    assert len(items) == 1
+    assert items[0]["title"].endswith("September 2026")

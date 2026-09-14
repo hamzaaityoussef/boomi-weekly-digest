@@ -76,9 +76,11 @@ scrape_pages:
   # Article mensuel du blog — le slug suit le mois et l'année courants
   - name: "Boomi Blog - Platform Release"
     url: "https://boomi.com/blog/everything-you-want-to-know-about-the-{month_slug}-{year}-boomi-integration-and-automation-platform-release/"
-    item_selector: ".post-detail .post-content"
+    item_selector: ".post-detail .post-content, .post-content"
     title_selector: "h1"
+    page_title_selector: "h1"
     description_selector: ".blog-content-wrapper"
+    link_selector: ".release-article-link"
     page_link: true
     use_description: true
     keep_keywords: []

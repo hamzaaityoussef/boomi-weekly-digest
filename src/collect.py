@@ -88,6 +88,14 @@ def collect_scrape(page_cfg: dict, keep_keywords: list[str]) -> list[dict]:
                 if fallback_selector:
                     candidates.extend(soup.select(fallback_selector))
 
+        if not candidates:
+            logger.warning(
+                "Aucun élément trouvé pour %s à l'adresse %s (sélecteur: %s)",
+                page_cfg["name"],
+                page_url,
+                item_selector or "fallback",
+            )
+
         seen = set()
         for block in candidates:
             if not getattr(block, "name", None):
@@ -99,6 +107,8 @@ def collect_scrape(page_cfg: dict, keep_keywords: list[str]) -> list[dict]:
                 link_selector = page_cfg.get("link_selector", "a")
 
                 title_el = block.select_one(title_selector)
+                if title_el is None and page_cfg.get("page_title_selector"):
+                    title_el = soup.select_one(page_cfg["page_title_selector"])
                 if title_el is None and title_selector and block.name and block.name == "a":
                     title_el = block
 
